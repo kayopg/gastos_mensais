@@ -30,9 +30,7 @@ from src.theme import render_header
 
 render_header(
     "🏷️ Classificação manual",
-    f"Fonte: <strong>{current_source()}</strong> · "
-    f"Override por despesa em <code>data/transaction_overrides.json</code> · "
-    f"Defaults por estabelecimento em <code>data/categories.json</code>",
+    f"Fonte: <strong>{current_source()}</strong>",
 )
 
 
@@ -56,9 +54,7 @@ df_class = classify(df, manual, tx_o)
 # ---------------------------------------------------------------------------
 st.markdown(
     "Cada linha é uma despesa. Edite **Categoria**, **Subcategoria** e **Tipo** "
-    "diretamente. Ao salvar, o ajuste vira override granular naquela transação "
-    "(o estabelecimento como um todo continua usando o default em "
-    "`categories.json`)."
+    "diretamente e clique em **Salvar** ao final."
 )
 
 col_f1, col_f2, col_f3 = st.columns([2, 1, 1])
