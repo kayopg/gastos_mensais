@@ -253,36 +253,191 @@ def parse_xlsx(content: bytes, source: str, cartao: str | None = None) -> pd.Dat
 # ---------------------------------------------------------------------------
 # OFX
 # ---------------------------------------------------------------------------
+def _extract_ofx_tx_info(tx) -> tuple[str, str, bool]:
+    """Extrai (estabelecimento, parcela, is_parcelado) de uma transação OFX.
+
+    Se há `payee`, usa-o direto. Senão, o `memo` costuma ter o padrão
+    `<NOME>  NN/NN  <CIDADE>` (Sicoob) — separamos por 2+ espaços e
+    detectamos a parcela `NN/NN`.
+    """
+    payee = (getattr(tx, "payee", None) or "").strip()
+    memo = (getattr(tx, "memo", None) or "").strip()
+
+    text = memo if not payee else memo
+    parts = re.split(r"\s{2,}", text) if text else []
+
+    # Procura padrão NN/NN nas partes (ex: '10/10' = parcela 10 de 10)
+    for i, p in enumerate(parts):
+        m = re.fullmatch(r"(\d{1,2})/(\d{1,2})", p.strip())
+        if not m:
+            continue
+        a, b = int(m.group(1)), int(m.group(2))
+        if not (1 <= a <= b <= 99):
+            continue
+        parcela_str = f"{a} de {b}"
+        is_parc = b > 1
+        if payee:
+            return payee, parcela_str, is_parc
+        name = " ".join(parts[:i]).strip() or memo
+        return name, parcela_str, is_parc
+
+    # Sem parcela detectada
+    if payee:
+        return payee, "-", False
+    if parts:
+        return parts[0].strip(), "-", False
+    return memo, "-", False
+
+
 def parse_ofx(content: bytes, source: str, cartao: str | None = None) -> pd.DataFrame:
     from ofxparse import OfxParser  # import local para keep startup leve
+    from ofxparse.ofxparse import AccountType  # noqa: F401  (importa enum para detecção)
 
     ofx = OfxParser.parse(io.BytesIO(content))
     rows: list[dict] = []
     for account in ofx.accounts:
-        # Em statements de cartão, débitos vêm negativos. Para manter a
-        # convenção do projeto (compras > 0), invertemos o sinal.
-        is_credit_card = getattr(account, "account_type", "").upper() in {"CREDITLINE", "CREDITCARD"} \
-            or (getattr(account, "type", "") or "").lower() == "creditline"
+        # Detecção de cartão de crédito — várias estratégias para diferentes
+        # versões de OFX (SGML legacy x XML moderno). AccountType.CreditCard == 2.
+        acc_type_int = getattr(account, "type", None)
+        acc_type_str = str(getattr(account, "account_type", "") or "").upper()
+        is_credit_card = (
+            acc_type_int == 2
+            or acc_type_str in {"CREDITLINE", "CREDITCARD"}
+            or "CREDIT" in acc_type_str
+        )
         for tx in account.statement.transactions:
-            est = (tx.payee or tx.memo or "").strip()
             valor = float(tx.amount)
             if is_credit_card:
+                # OFX de cartão: charges vêm negativos, refunds/pagamentos positivos.
+                # Invertemos para a convenção do projeto (compras > 0).
                 valor = -valor
+            est, parcela, is_parc = _extract_ofx_tx_info(tx)
             rows.append({
                 "data": tx.date,
                 "estabelecimento": est,
                 "portador": "",
                 "valor": valor,
-                "parcela": "-",
-                "is_parcelado": False,
+                "parcela": parcela,
+                "is_parcelado": is_parc,
             })
+    return _finalize(pd.DataFrame(rows), source, cartao=cartao)
+
+
+# ---------------------------------------------------------------------------
+# PDF (Itaú — extrai a tabela de Lançamentos do PDF da fatura)
+# ---------------------------------------------------------------------------
+_PDF_DATE_LINE = re.compile(r"^(\d{2}/\d{2})\s+(.+)$")
+_PDF_MONEY = re.compile(r"(\d{1,3}(?:\.\d{3})*,\d{2})")
+_PDF_PARCELA_TAIL = re.compile(r"(\d{1,2}/\d{1,2})$")
+
+
+def parse_pdf(content: bytes, source: str, cartao: str | None = None) -> pd.DataFrame:
+    """Extrai lançamentos de uma fatura Itaú em PDF.
+
+    Heurísticas:
+      - Texto via pdfplumber (concatena todas as páginas).
+      - Início da tabela: linha contendo `Lançamentos:` ou `DATA ESTABELECIMENTO`.
+      - Fim da tabela: linha de "próximas faturas" / "Encargos" / "Total".
+      - Em cada linha de transação: o PRIMEIRO valor monetário é o da transação;
+        valores seguintes (ex: limite de crédito na coluna lateral) são ignorados.
+      - Parcela é detectada como sufixo `NN/NN` no nome do estabelecimento
+        (PDF Itaú remove os espaços entre palavras).
+      - Ano é inferido pelo nome do arquivo (`mes_ref`): se mês > mês da fatura,
+        usa o ano anterior; senão, ano da fatura.
+    """
+    import pdfplumber  # import local — só carrega se PDF for processado
+
+    invoice_month = _invoice_month_from_filename(source)
+    if invoice_month:
+        fat_year = int(invoice_month[:4])
+        fat_month = int(invoice_month[5:7])
+    else:
+        from datetime import date as _date
+        fat_year, fat_month = _date.today().year, _date.today().month
+
+    with pdfplumber.open(io.BytesIO(content)) as pdf:
+        full_text = "\n".join((p.extract_text() or "") for p in pdf.pages)
+
+    rows: list[dict] = []
+    in_section = False
+    for raw in full_text.split("\n"):
+        line = raw.strip()
+        if not line:
+            continue
+
+        clean = line.replace(" ", "")
+
+        # Início da seção
+        if not in_section:
+            if "Lançamentos:" in line or "DATAESTABELECIMENTO" in clean:
+                in_section = True
+            continue
+
+        # Fim da seção (próximas faturas / encargos / total)
+        if (
+            "próximasfaturas" in clean.lower()
+            or clean.startswith("Encargos")
+            or clean.startswith("Total")
+            or clean.startswith("Lançamentosnocartão")
+        ):
+            in_section = False
+            continue
+
+        # Procura valores monetários — o PRIMEIRO é o da transação
+        money_iter = list(_PDF_MONEY.finditer(line))
+        if not money_iter:
+            continue
+        first_m = money_iter[0]
+        value_str = first_m.group(1)
+        prefix = line[: first_m.start()].rstrip()
+
+        dm = _PDF_DATE_LINE.match(prefix)
+        if not dm:
+            continue
+        ddmm, middle = dm.groups()
+
+        # Parcela no sufixo do estabelecimento
+        pm = _PDF_PARCELA_TAIL.search(middle)
+        if pm:
+            a, b = int(pm.group(1).split("/")[0]), int(pm.group(1).split("/")[1])
+            if 1 <= a <= b <= 99:
+                parcela = f"{a} de {b}"
+                is_parc = b > 1
+                est = middle[: pm.start()].rstrip()
+            else:
+                parcela, is_parc, est = "-", False, middle.strip()
+        else:
+            parcela, is_parc, est = "-", False, middle.strip()
+
+        # Ano via heurística
+        try:
+            day, mon = int(ddmm[:2]), int(ddmm[3:])
+        except ValueError:
+            continue
+        year = fat_year if mon <= fat_month else fat_year - 1
+        try:
+            tx_date = pd.Timestamp(year=year, month=mon, day=day)
+        except (ValueError, OverflowError):
+            continue
+
+        valor = float(value_str.replace(".", "").replace(",", "."))
+
+        rows.append({
+            "data": tx_date,
+            "estabelecimento": est,
+            "portador": "",
+            "valor": valor,
+            "parcela": parcela,
+            "is_parcelado": is_parc,
+        })
+
     return _finalize(pd.DataFrame(rows), source, cartao=cartao)
 
 
 # ---------------------------------------------------------------------------
 # Dispatcher
 # ---------------------------------------------------------------------------
-_SUPPORTED = {".csv", ".xlsx", ".xls", ".ofx"}
+_SUPPORTED = {".csv", ".xlsx", ".xls", ".ofx", ".pdf"}
 
 
 def parse_file(name: str, content: bytes, cartao: str | None = None) -> pd.DataFrame:
@@ -293,6 +448,8 @@ def parse_file(name: str, content: bytes, cartao: str | None = None) -> pd.DataF
         return parse_xlsx(content, source=name, cartao=cartao)
     if ext == ".ofx":
         return parse_ofx(content, source=name, cartao=cartao)
+    if ext == ".pdf":
+        return parse_pdf(content, source=name, cartao=cartao)
     raise ValueError(f"Extensão não suportada: {ext}")
 
 

@@ -21,7 +21,7 @@ from .config import DEFAULT_CARTAO, KNOWN_CARTOES, ROOT_DIR
 
 SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 LOCAL_DIR = ROOT_DIR / "data" / "raw"
-SUPPORTED_EXTS = (".csv", ".xlsx", ".xls", ".ofx")
+SUPPORTED_EXTS = (".csv", ".xlsx", ".xls", ".ofx", ".pdf")
 
 
 def _normalize_cartao(name: str | None) -> str:
