@@ -89,11 +89,19 @@ def save_manual_map(mapping: ManualMap, path: Path = CATEGORIES_FILE) -> None:
 # ---------------------------------------------------------------------------
 # Persistência por transação (transaction_overrides.json)
 # ---------------------------------------------------------------------------
-def tx_key(row: pd.Series | dict) -> str:
-    """Chave estável para uma transação. Usada como índice no JSON."""
-    def _g(k):
-        v = row[k] if isinstance(row, dict) else getattr(row, k, row.get(k) if hasattr(row, "get") else None)
-        return v
+def tx_key(row) -> str:
+    """Chave estável para uma transação. Usada como índice no JSON.
+
+    Aceita dict, pd.Series ou objeto com __getitem__. Usa indexação por
+    chave (não getattr) para evitar conflito com atributos nativos do
+    pd.Series (ex: Series.data é o buffer interno, não o valor da coluna).
+    """
+    def _g(k, default=""):
+        try:
+            v = row[k]
+        except (KeyError, IndexError, TypeError):
+            return default
+        return default if v is None else v
 
     data = _g("data")
     if hasattr(data, "strftime"):
@@ -101,16 +109,18 @@ def tx_key(row: pd.Series | dict) -> str:
     else:
         data_iso = str(data)[:10]
 
-    valor = _g("valor")
-    valor_str = f"{float(valor):.2f}"
+    try:
+        valor_str = f"{float(_g('valor', 0)):.2f}"
+    except (TypeError, ValueError):
+        valor_str = "0.00"
 
     return "|".join([
-        str(_g("mes_ref") or ""),
+        str(_g("mes_ref")),
         data_iso,
-        str(_g("estabelecimento") or "").strip(),
+        str(_g("estabelecimento")).strip(),
         valor_str,
         str(_g("parcela") or "-"),
-        str(_g("cartao") or ""),
+        str(_g("cartao")),
     ])
 
 
