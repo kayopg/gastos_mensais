@@ -99,32 +99,37 @@ tipos_sel = st.sidebar.multiselect(
 
 # ---------------------------------------------------------------------------
 # Aplicação dos filtros
+#
+# `mask_base` aplica TUDO menos o mês de referência — usada pela evolução
+# (que precisa de múltiplos meses).
+# `mask_view` adiciona o mês — usada pelos cards, pizza e tabela.
 # ---------------------------------------------------------------------------
-mask = pd.Series(True, index=df.index)
+mask_base = pd.Series(True, index=df.index)
 
 if isinstance(periodo, tuple) and len(periodo) == 2:
     d_ini, d_fim = periodo
-    mask &= (df["data"].dt.date >= d_ini) & (df["data"].dt.date <= d_fim)
+    mask_base &= (df["data"].dt.date >= d_ini) & (df["data"].dt.date <= d_fim)
 
 if cartoes_sel:
-    mask &= df["cartao"].isin(cartoes_sel)
+    mask_base &= df["cartao"].isin(cartoes_sel)
 if estabs:
-    mask &= df["estabelecimento"].isin(estabs)
+    mask_base &= df["estabelecimento"].isin(estabs)
 if cats_sel:
-    mask &= df["categoria"].isin(cats_sel)
+    mask_base &= df["categoria"].isin(cats_sel)
 if subs_sel:
-    mask &= df["subcategoria"].isin(subs_sel)
+    mask_base &= df["subcategoria"].isin(subs_sel)
 if tipos_sel:
-    mask &= df["tipo"].isin(tipos_sel)
+    mask_base &= df["tipo"].isin(tipos_sel)
 
-df_filt = df.loc[mask].copy()
-df_mes = df_filt[df_filt["mes_ref"] == mes_sel]
+mask_view = mask_base & (df["mes_ref"] == mes_sel)
+df_view = df.loc[mask_view].copy()
+df_evol_base = df.loc[mask_base].copy()
 
 # ---------------------------------------------------------------------------
 # KPI Cards
 # ---------------------------------------------------------------------------
 st.markdown(f"## 📊 Resumo — {mes_sel}")
-metrics = summary_metrics(df_mes)
+metrics = summary_metrics(df_view)
 cols = st.columns(len(metrics))
 for col, (label, value) in zip(cols, metrics.items()):
     if isinstance(value, float):
@@ -141,15 +146,15 @@ g1, g2 = st.columns([1, 1.4])
 
 with g1:
     st.markdown("### Distribuição por Categoria")
-    if df_mes.empty:
+    if df_view.empty:
         st.info("Sem dados para o mês selecionado.")
     else:
-        st.plotly_chart(pie_by_category(df_mes), use_container_width=True)
+        st.plotly_chart(pie_by_category(df_view), use_container_width=True)
 
 with g2:
     st.markdown("### Evolução — últimos 6 meses")
     ult6 = sorted(df["mes_ref"].dropna().unique())[-6:]
-    df_evol = df_filt[df_filt["mes_ref"].isin(ult6)]
+    df_evol = df_evol_base[df_evol_base["mes_ref"].isin(ult6)]
     if df_evol.empty:
         st.info("Sem dados nos últimos 6 meses.")
     else:
@@ -159,10 +164,13 @@ with g2:
 # Tabela de detalhamento
 # ---------------------------------------------------------------------------
 st.markdown("## 📋 Detalhamento de despesas")
-st.caption(f"Mostrando **{len(df_filt)}** lançamentos · Reage a todos os filtros da barra lateral.")
+st.caption(
+    f"Mostrando **{len(df_view)}** lançamentos · "
+    f"Reage a todos os filtros da barra lateral (incluindo Mês = {mes_sel})."
+)
 
 show = (
-    df_filt[
+    df_view[
         ["data", "estabelecimento", "cartao", "categoria", "subcategoria",
          "tipo", "valor", "parcela"]
     ]
