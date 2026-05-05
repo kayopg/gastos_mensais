@@ -1,0 +1,17 @@
+[theme]
+base = "dark"
+# Acento principal — usado em botões, sliders, foco
+primaryColor = "#FF4B6E"
+# Fundo geral da página
+backgroundColor = "#0F1729"
+# Fundo de cards, sidebar, dataframes
+secondaryBackgroundColor = "#1B2942"
+# Texto principal
+textColor = "#F5F7FA"
+font = "sans serif"
+
+[server]
+headless = true
+
+[browser]
+gatherUsageStats = false

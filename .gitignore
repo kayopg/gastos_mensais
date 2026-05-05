@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+
+# Streamlit
+.streamlit/secrets.toml
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data (faturas locais — vêm do Drive em produção)
+data/raw/
+*.csv
+*.xlsx
+*.ofx
+!data/categories.json
+!tests/fixtures/*
+
+# Cache
+.cache/
+.pytest_cache/
+.cache_test.txt
