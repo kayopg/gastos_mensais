@@ -135,9 +135,24 @@ div[data-baseweb="tag"] {
     border: none !important;
 }
 
-/* ============ RESPONSIVO — Celular (≤ 768px) ============ */
+/* ============ TABLET / FOLDABLE (≤ 1100px) — empilhar colunas ============ */
+/* Cobre Samsung ZFold (extended), iPad mini, tablets em paisagem estreita.
+   Mantém o header normal mas força colunas a empilhar (1 por linha) — caso
+   contrário cards e gráficos ficam apertados em 4 colunas estreitas. */
+@media (max-width: 1100px) {
+    [data-testid="stHorizontalBlock"] {
+        flex-direction: column !important;
+        gap: 12px !important;
+    }
+    [data-testid="stHorizontalBlock"] > [data-testid="column"] {
+        width: 100% !important;
+        min-width: 0 !important;
+        flex: 1 1 100% !important;
+    }
+}
+
+/* ============ CELULAR (≤ 768px) — tipografia e paddings menores ============ */
 @media (max-width: 768px) {
-    /* Padding geral menor */
     .main .block-container {
         padding-top: 0.5rem !important;
         padding-left: 0.6rem !important;
@@ -145,7 +160,6 @@ div[data-baseweb="tag"] {
         padding-bottom: 1rem !important;
     }
 
-    /* Header mais compacto */
     .exec-header {
         padding: 16px 18px !important;
         margin-bottom: 16px !important;
@@ -160,18 +174,6 @@ div[data-baseweb="tag"] {
         margin-top: 4px !important;
     }
 
-    /* Empilha colunas verticalmente em vez de lado a lado */
-    [data-testid="stHorizontalBlock"] {
-        flex-direction: column !important;
-        gap: 10px !important;
-    }
-    [data-testid="stHorizontalBlock"] > [data-testid="column"] {
-        width: 100% !important;
-        min-width: 0 !important;
-        flex: 1 1 100% !important;
-    }
-
-    /* KPI cards mais compactos */
     div[data-testid="stMetric"] {
         padding: 14px 14px 12px 14px !important;
     }
@@ -186,26 +188,23 @@ div[data-baseweb="tag"] {
         letter-spacing: 0.5px !important;
     }
 
-    /* Sub-headers menores */
     h2 { font-size: 1.05rem !important; margin-top: 0.6rem !important; }
     h3 { font-size: 0.95rem !important; }
 
-    /* Containers de gráfico com menos padding */
     div[data-testid="stPlotlyChart"] {
         padding: 10px !important;
     }
 
-    /* Sidebar — abre como overlay; chip mais compacto */
-    section[data-testid="stSidebar"] {
-        width: 85vw !important;
-    }
     div[data-baseweb="tag"] {
         font-size: 0.75rem !important;
     }
 }
 
-/* ============ Telas muito pequenas (≤ 420px) ============ */
-@media (max-width: 420px) {
+/* ============ MOBILE PEQUENO (≤ 480px) — sidebar overlay ============ */
+@media (max-width: 480px) {
+    section[data-testid="stSidebar"] {
+        width: 85vw !important;
+    }
     .exec-header h1 { font-size: 1.15rem !important; }
     div[data-testid="stMetric"] div[data-testid="stMetricValue"] {
         font-size: 1.2rem !important;
