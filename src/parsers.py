@@ -360,6 +360,9 @@ def parse_pdf(content: bytes, source: str, cartao: str | None = None) -> pd.Data
 
     rows: list[dict] = []
     in_section = False
+    section_done = False  # uma vez encerrada, não reabre (evita capturar
+                          # 'Compras parceladas - próximas faturas' que tem
+                          # o mesmo cabeçalho 'DATA ESTABELECIMENTO VALOREMR$')
     for raw in full_text.split("\n"):
         line = raw.strip()
         if not line:
@@ -367,20 +370,26 @@ def parse_pdf(content: bytes, source: str, cartao: str | None = None) -> pd.Data
 
         clean = line.replace(" ", "")
 
-        # Início da seção
-        if not in_section:
+        # Início da seção (apenas uma vez!)
+        if not in_section and not section_done:
             if "Lançamentos:" in line or "DATAESTABELECIMENTO" in clean:
                 in_section = True
             continue
 
-        # Fim da seção (próximas faturas / encargos / total)
+        # Já passamos da seção válida — ignora resto do PDF
+        if section_done:
+            continue
+
+        # Fim da seção (próximas faturas / encargos / total / total dos lançamentos)
         if (
             "próximasfaturas" in clean.lower()
             or clean.startswith("Encargos")
             or clean.startswith("Total")
             or clean.startswith("Lançamentosnocartão")
+            or clean.startswith("LTotaldoslançamentos")
         ):
             in_section = False
+            section_done = True
             continue
 
         # Procura valores monetários — o PRIMEIRO é o da transação
