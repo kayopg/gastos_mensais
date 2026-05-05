@@ -464,6 +464,8 @@ def parse_file(name: str, content: bytes, cartao: str | None = None) -> pd.DataF
 
 def parse_many(files: Iterable[tuple]) -> pd.DataFrame:
     """Aceita tuplas `(name, content)` ou `(name, content, cartao)`."""
+    from .config import PAGAMENTO_FATURA_RE
+
     frames: list[pd.DataFrame] = []
     errors: list[tuple[str, str]] = []
     for entry in files:
@@ -479,6 +481,11 @@ def parse_many(files: Iterable[tuple]) -> pd.DataFrame:
     if not frames:
         return _empty_frame()
     df = pd.concat(frames, ignore_index=True)
+    # Filtra pagamentos de fatura (não são despesas — quitação da fatura anterior)
+    is_pagamento = df["estabelecimento"].str.contains(
+        PAGAMENTO_FATURA_RE, case=False, regex=True, na=False
+    )
+    df = df.loc[~is_pagamento].copy()
     # de-duplicação básica (mesma data + estabelecimento + valor + fonte + cartao)
     df = df.drop_duplicates(
         subset=["data", "estabelecimento", "valor", "fonte", "parcela", "cartao"]

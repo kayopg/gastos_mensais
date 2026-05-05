@@ -1,28 +1,27 @@
 """Classificação de despesas em três dimensões: Categoria, Subcategoria e Tipo.
 
-Estrutura do `data/categories.json` (manual_map):
+Hierarquia de prioridade na resolução (do mais específico ao mais genérico):
 
-    {
-      "ESTABELECIMENTO X": {
-        "categoria":    "Hospedagem",
-        "subcategoria": "Viagens",
-        "tipo":         "Fixo"          # opcional; null = derivar
-      },
-      ...
-    }
+  1. **Override por TRANSAÇÃO** — `data/transaction_overrides.json`, keyed por
+     `mes_ref|data|estabelecimento|valor|parcela|cartao` (granularidade fina).
+  2. **Override por ESTABELECIMENTO** — `data/categories.json`, keyed por nome
+     do estabelecimento (para o caso comum: "GIASSI sempre é Alimentação").
+  3. **Heurísticas automáticas** — `KEYWORD_RULES` (categoria) e
+     `SUBCATEGORY_RULES` (subcategoria).
+  4. **Defaults** — categoria=Outros, subcategoria="", tipo derivado de
+     `is_parcelado` (Parcelado se True, senão "Variável").
 
-Retrocompatibilidade: se uma entrada vier como string (formato antigo), é
-interpretada como `{categoria: <string>}`.
+Estrutura de cada arquivo:
 
-Prioridade na resolução:
-  1. **Override manual** — `manual_map[estabelecimento]` (cada campo independente).
-  2. **Regras automáticas** — `KEYWORD_RULES` (categoria) e `SUBCATEGORY_RULES`.
-  3. **Defaults** — categoria=Outros, subcategoria="" (vazia), tipo derivado de `is_parcelado`.
+    categories.json (estabelecimento → defaults)
+    {"BOOKING.COM HOTEL": {"categoria": "Hospedagem", "subcategoria": "Viagens"}}
 
-Tipo:
-  - Override manual SEM parcelado → respeita.
-  - Sem override e `is_parcelado=True` → "Parcelado".
-  - Sem override e sem parcela → "Variável".
+    transaction_overrides.json (transação → override granular)
+    {"2026-05|2026-04-20|MP*CIPOMOTOS|348.77|1 de 10|Sicoob":
+        {"categoria": "Outros", "tipo": "Parcelado"}}
+
+Retrocompatibilidade: `categories.json` aceita string (legado) — interpretada
+como `{categoria: <string>}`.
 """
 from __future__ import annotations
 
@@ -34,6 +33,7 @@ import pandas as pd
 
 from .config import (
     CATEGORIES_FILE,
+    DATA_DIR,
     KEYWORD_RULES,
     SUBCATEGORY_RULES,
     TIPO_DEFAULT,
@@ -41,10 +41,13 @@ from .config import (
 
 ManualEntry = dict[str, str | None]
 ManualMap = dict[str, ManualEntry]
+TxOverridesMap = dict[str, ManualEntry]
+
+TX_OVERRIDES_FILE = DATA_DIR / "transaction_overrides.json"
 
 
 # ---------------------------------------------------------------------------
-# Persistência
+# Persistência por estabelecimento (categories.json)
 # ---------------------------------------------------------------------------
 def _coerce_entry(value: Any) -> ManualEntry:
     """Aceita string (legado) ou dict; devolve dict normalizado."""
@@ -84,6 +87,57 @@ def save_manual_map(mapping: ManualMap, path: Path = CATEGORIES_FILE) -> None:
 
 
 # ---------------------------------------------------------------------------
+# Persistência por transação (transaction_overrides.json)
+# ---------------------------------------------------------------------------
+def tx_key(row: pd.Series | dict) -> str:
+    """Chave estável para uma transação. Usada como índice no JSON."""
+    def _g(k):
+        v = row[k] if isinstance(row, dict) else getattr(row, k, row.get(k) if hasattr(row, "get") else None)
+        return v
+
+    data = _g("data")
+    if hasattr(data, "strftime"):
+        data_iso = data.strftime("%Y-%m-%d")
+    else:
+        data_iso = str(data)[:10]
+
+    valor = _g("valor")
+    valor_str = f"{float(valor):.2f}"
+
+    return "|".join([
+        str(_g("mes_ref") or ""),
+        data_iso,
+        str(_g("estabelecimento") or "").strip(),
+        valor_str,
+        str(_g("parcela") or "-"),
+        str(_g("cartao") or ""),
+    ])
+
+
+def load_tx_overrides(path: Path = TX_OVERRIDES_FILE) -> TxOverridesMap:
+    if not path.exists():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    return {k: _coerce_entry(v) for k, v in raw.items()}
+
+
+def save_tx_overrides(mapping: TxOverridesMap, path: Path = TX_OVERRIDES_FILE) -> None:
+    cleaned: dict[str, dict[str, str]] = {}
+    for k, entry in mapping.items():
+        e = {kk: vv for kk, vv in entry.items() if vv}
+        if e:
+            cleaned[k] = e
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(
+        json.dumps(cleaned, ensure_ascii=False, indent=2, sort_keys=True),
+        encoding="utf-8",
+    )
+
+
+# ---------------------------------------------------------------------------
 # Heurísticas de keyword
 # ---------------------------------------------------------------------------
 def _match_keyword(estabelecimento: str, rules: dict[str, list[str]]) -> str | None:
@@ -95,24 +149,27 @@ def _match_keyword(estabelecimento: str, rules: dict[str, list[str]]) -> str | N
 
 
 # ---------------------------------------------------------------------------
-# Aplicação row-a-row
+# Resolução
 # ---------------------------------------------------------------------------
-def _resolve_row(row: pd.Series, manual: ManualMap) -> tuple[str, str, str]:
+def resolve_no_tx(
+    row: pd.Series, manual: ManualMap
+) -> tuple[str, str, str]:
+    """Resolve sem considerar override de transação.
+
+    Útil para a UI saber qual seria o "auto" se o usuário limpasse o override.
+    """
     est = str(row["estabelecimento"]).strip()
     overrides = manual.get(est, {})
 
-    # Categoria
     cat = overrides.get("categoria") or _match_keyword(est, KEYWORD_RULES) or "Outros"
 
-    # Subcategoria
     sub = overrides.get("subcategoria")
     if not sub:
         sub = _match_keyword(est, SUBCATEGORY_RULES) or ""
 
-    # Tipo
-    tipo_override = overrides.get("tipo")
-    if tipo_override:
-        tipo = tipo_override
+    tipo_o = overrides.get("tipo")
+    if tipo_o:
+        tipo = tipo_o
     elif bool(row.get("is_parcelado")):
         tipo = "Parcelado"
     else:
@@ -121,7 +178,24 @@ def _resolve_row(row: pd.Series, manual: ManualMap) -> tuple[str, str, str]:
     return cat, sub, tipo
 
 
-def classify(df: pd.DataFrame, manual_map: ManualMap | None = None) -> pd.DataFrame:
+def _resolve_row(
+    row: pd.Series,
+    manual: ManualMap,
+    tx_overrides: TxOverridesMap,
+) -> tuple[str, str, str]:
+    cat0, sub0, tipo0 = resolve_no_tx(row, manual)
+    tx_o = tx_overrides.get(tx_key(row), {})
+    cat = tx_o.get("categoria") or cat0
+    sub = tx_o.get("subcategoria") or sub0
+    tipo = tx_o.get("tipo") or tipo0
+    return cat, sub, tipo
+
+
+def classify(
+    df: pd.DataFrame,
+    manual_map: ManualMap | None = None,
+    tx_overrides: TxOverridesMap | None = None,
+) -> pd.DataFrame:
     """Preenche `categoria`, `subcategoria` e `tipo` em-place."""
     if df.empty:
         out = df.copy()
@@ -131,8 +205,13 @@ def classify(df: pd.DataFrame, manual_map: ManualMap | None = None) -> pd.DataFr
         return out
 
     manual = manual_map if manual_map is not None else load_manual_map()
+    tx_o = tx_overrides if tx_overrides is not None else load_tx_overrides()
+
     df = df.copy()
-    resolved = df.apply(lambda r: _resolve_row(r, manual), axis=1, result_type="expand")
+    resolved = df.apply(
+        lambda r: _resolve_row(r, manual, tx_o),
+        axis=1, result_type="expand",
+    )
     resolved.columns = ["categoria", "subcategoria", "tipo"]
     df["categoria"] = resolved["categoria"]
     df["subcategoria"] = resolved["subcategoria"]

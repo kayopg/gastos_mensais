@@ -90,6 +90,16 @@ DEFAULT_CARTAO = "XP"
 KNOWN_CARTOES = ["XP", "Sicoob", "Itaú"]
 
 # ---------------------------------------------------------------------------
+# Pagamentos de fatura — não são despesas, devem ser filtrados do dataset
+# (são apenas a quitação da fatura anterior, vindo da conta corrente).
+# ---------------------------------------------------------------------------
+PAGAMENTO_FATURA_RE = (
+    r"Pagamento de fatura"               # XP CSV
+    r"|PAGAMENTO\s*DEBITO\s*EM\s*CONTA"  # Sicoob OFX
+    r"|Pagamentos Validos Normais"       # XP — variante
+)
+
+# ---------------------------------------------------------------------------
 # Schema do DataFrame normalizado (após o parse das faturas)
 # ---------------------------------------------------------------------------
 COLUMNS = [

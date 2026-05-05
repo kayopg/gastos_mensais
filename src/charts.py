@@ -139,21 +139,17 @@ def stacked_evolution(df: pd.DataFrame) -> go.Figure:
 # ---------------------------------------------------------------------------
 # Métricas dos cards
 # ---------------------------------------------------------------------------
-# Padrões de pagamento de fatura anterior (não contam como "gasto" do mês)
-_PAGAMENTO_FATURA_RE = (
-    r"Pagamento de fatura"           # XP CSV
-    r"|PAGAMENTO\s*DEBITO\s*EM\s*CONTA"  # Sicoob OFX
-    r"|Pagamentos Validos Normais"   # variantes do XP
-)
-
-
 def summary_metrics(df: pd.DataFrame) -> dict[str, float]:
-    """Métricas dos cards (com lógica robusta de fatura).
+    """Métricas dos cards.
 
-    - Total: compras menos refunds, **excluindo** pagamento da fatura anterior.
-    - Nº de transações: apenas compras (valor>0, sem pagamentos).
-    - Ticket médio: média das compras (positivos).
-    - Parcelados: soma de compras com is_parcelado=True.
+    Pagamentos de fatura (Pagamento de fatura / PAGAMENTO DEBITO EM CONTA /
+    Pagamentos Validos Normais) já são filtrados em `parse_many`, então aqui
+    o df só tem despesas reais.
+
+    - Total: compras menos refunds (soma líquida de tudo).
+    - Nº de transações: apenas compras (valor>0).
+    - Ticket médio: média das compras.
+    - Parcelados: soma das compras com is_parcelado=True.
     """
     if df.empty:
         return {
@@ -162,13 +158,9 @@ def summary_metrics(df: pd.DataFrame) -> dict[str, float]:
             "Nº de transações": 0,
             "Parcelados (R$)": 0.0,
         }
-    is_pagamento = df["estabelecimento"].str.contains(
-        _PAGAMENTO_FATURA_RE, case=False, regex=True, na=False
-    )
-    real = df[~is_pagamento]
-    pos = real[real["valor"] > 0]
+    pos = df[df["valor"] > 0]
     return {
-        "Total no período":  float(real["valor"].sum()),
+        "Total no período":  float(df["valor"].sum()),
         "Ticket médio":      float(pos["valor"].mean() or 0),
         "Nº de transações":  int(len(pos)),
         "Parcelados (R$)":   float(pos.loc[pos["is_parcelado"], "valor"].sum()),
