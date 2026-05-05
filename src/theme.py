@@ -137,15 +137,22 @@ div[data-baseweb="tag"] {
 
 /* ============ TABLET / FOLDABLE (≤ 1100px) — empilhar colunas ============ */
 /* Cobre Samsung ZFold (extended), iPad mini, tablets em paisagem estreita.
-   Mantém o header normal mas força colunas a empilhar (1 por linha) — caso
-   contrário cards e gráficos ficam apertados em 4 colunas estreitas. */
+   Mantém o header normal mas força colunas a empilhar (1 por linha).
+   Cobre nomes antigos e novos de testid (Streamlit mudou em versões recentes). */
 @media (max-width: 1100px) {
-    [data-testid="stHorizontalBlock"] {
+    div[data-testid="stHorizontalBlock"],
+    div[class*="stHorizontalBlock"] {
+        display: flex !important;
         flex-direction: column !important;
+        flex-wrap: wrap !important;
         gap: 12px !important;
     }
-    [data-testid="stHorizontalBlock"] > [data-testid="column"] {
+    div[data-testid="stHorizontalBlock"] > div[data-testid="column"],
+    div[data-testid="stHorizontalBlock"] > div[data-testid="stColumn"],
+    div[data-testid="stHorizontalBlock"] > div[class*="stColumn"],
+    div[class*="stHorizontalBlock"] > div[class*="stColumn"] {
         width: 100% !important;
+        max-width: 100% !important;
         min-width: 0 !important;
         flex: 1 1 100% !important;
     }
