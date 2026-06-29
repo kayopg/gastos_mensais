@@ -27,6 +27,7 @@ data/raw/
 # manual_expenses.json fica APENAS no Drive em produção; em dev local
 # também não commita (cada dev pode ter os seus testes)
 data/manual_expenses.json
+manual_expenses.json
 !tests/fixtures/*
 
 # Cache
