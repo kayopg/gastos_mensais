@@ -37,7 +37,12 @@ render_header(
 @st.cache_data(ttl=300, show_spinner="Carregando faturas...")
 def _load_raw() -> pd.DataFrame:
     files = filter_by_extension(fetch_invoices())
-    return parse_many(files)
+    df = parse_many(files)
+    if df.empty:
+        return df
+    # Defensiva — garante datetime64 mesmo se algum parser deixou como object
+    df["data"] = pd.to_datetime(df["data"], errors="coerce")
+    return df.dropna(subset=["data"])
 
 
 df = _load_raw()

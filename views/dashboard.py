@@ -18,6 +18,9 @@ def _load_dataset() -> pd.DataFrame:
     df = parse_many(files)
     if df.empty:
         return df
+    # Defensiva — garante datetime64 mesmo se algum parser deixou como object
+    df["data"] = pd.to_datetime(df["data"], errors="coerce")
+    df = df.dropna(subset=["data"])
     return classify(df)
 
 

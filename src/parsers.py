@@ -601,6 +601,13 @@ def parse_many(files: Iterable[tuple]) -> pd.DataFrame:
     if not frames:
         return _empty_frame()
     df = pd.concat(frames, ignore_index=True)
+
+    # Após o concat, força tipos críticos — caso algum frame venha vazio,
+    # a coluna `data` pode virar `object` em vez de `datetime64`, quebrando
+    # o `.dt.date` na UI. Reforçamos aqui de forma defensiva.
+    df["data"] = pd.to_datetime(df["data"], errors="coerce")
+    df = df.dropna(subset=["data"]).copy()
+
     # Filtra pagamentos de fatura (não são despesas — quitação da fatura anterior)
     is_pagamento = df["estabelecimento"].str.contains(
         PAGAMENTO_FATURA_RE, case=False, regex=True, na=False
