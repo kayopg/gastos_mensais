@@ -4,11 +4,15 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
+from datetime import date
+
 from src.charts import pie_by_category, stacked_evolution, summary_metrics
 from src.classifier import classify
-from src.config import CATEGORIES, SUBCATEGORIES, TIPOS
-from src.drive_loader import current_source, fetch_invoices, filter_by_extension
-from src.manual_expenses import manual_to_df
+from src.config import (
+    CATEGORIES, FORMAS_PAGAMENTO, PESSOAS, SUBCATEGORIES, TIPOS,
+)
+from src.drive_loader import DriveFileMissing, current_source, fetch_invoices, filter_by_extension
+from src.manual_expenses import append_manual_expense, manual_to_df
 from src.parsers import parse_many
 from src.theme import render_header
 
@@ -47,6 +51,98 @@ render_header(
     "💳 Gastos Mensais — Painel Executivo",
     f"Fonte: <strong>{current_source()}</strong> · Use a barra lateral para filtrar e o botão 🔄 para atualizar.",
 )
+
+
+# ---------------------------------------------------------------------------
+# Modal de nova despesa manual
+# ---------------------------------------------------------------------------
+@st.dialog("➕ Nova despesa", width="large")
+def _dialog_nova_despesa():
+    """Modal para adicionar despesa manual sem sair do dashboard."""
+    c1, c2 = st.columns(2)
+    with c1:
+        d_data = st.date_input("Data da compra", value=date.today(), key="modal_data")
+        d_est = st.text_input(
+            "Estabelecimento *",
+            placeholder="Ex: Padaria do Bairro",
+            key="modal_est",
+        )
+        d_val = st.number_input(
+            "Valor (R$) *", min_value=0.01, step=1.0, format="%.2f", key="modal_val"
+        )
+        d_forma = st.selectbox(
+            "Forma de pagamento *", FORMAS_PAGAMENTO, key="modal_forma"
+        )
+    with c2:
+        d_quem = st.selectbox("Quem pagou", PESSOAS, key="modal_quem")
+        d_cat = st.selectbox("Categoria *", CATEGORIES, key="modal_cat")
+        d_subs = [""] + [s for s in SUBCATEGORIES if s]
+        d_sub = st.selectbox("Subcategoria", d_subs, index=0, key="modal_sub")
+        d_tipo = st.selectbox(
+            "Tipo *", TIPOS, index=TIPOS.index("Variável"), key="modal_tipo"
+        )
+    d_parc = st.text_input(
+        "Parcela (opcional)",
+        placeholder="Ex: 1 de 3",
+        key="modal_parc",
+    )
+
+    if d_forma.startswith("Crédito"):
+        st.warning(
+            f"⚠️ Cuidado com duplicata — compras em **{d_forma}** normalmente vêm na fatura. "
+            "Use só se essa transação NÃO virá na próxima fatura."
+        )
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        salvar = st.button(
+            "💾 Salvar", type="primary", use_container_width=True, key="modal_save"
+        )
+    with col_b:
+        cancelar = st.button(
+            "✕ Cancelar", use_container_width=True, key="modal_cancel"
+        )
+
+    if cancelar:
+        st.rerun()
+
+    if salvar:
+        if not d_est.strip() or d_val <= 0:
+            st.error("Preencha pelo menos **Estabelecimento** e **Valor**.")
+        else:
+            entry = {
+                "data": d_data.isoformat(),
+                "estabelecimento": d_est.strip(),
+                "valor": float(d_val),
+                "forma_pagamento": d_forma,
+                "categoria": d_cat,
+                "subcategoria": d_sub,
+                "tipo": d_tipo,
+                "parcela": d_parc.strip() or "-",
+                "quem": d_quem,
+            }
+            try:
+                append_manual_expense(entry)
+                st.cache_data.clear()
+                st.success(f"✅ Adicionada: {d_est} · R$ {d_val:.2f}")
+                st.rerun()  # fecha o modal e atualiza a dashboard
+            except DriveFileMissing:
+                st.error(
+                    "❌ Arquivo `manual_expenses.json` ainda não existe no Drive. "
+                    "Vá em **🏷️ Manuais** e siga as instruções de setup inicial."
+                )
+            except Exception as e:  # noqa: BLE001
+                st.error(f"Falha ao salvar: {e}")
+
+
+# ---------------------------------------------------------------------------
+# Linha de ações: Nova despesa
+# ---------------------------------------------------------------------------
+col_act1, col_act_pad = st.columns([2, 5])
+with col_act1:
+    if st.button("➕ Nova despesa", type="primary", use_container_width=True):
+        _dialog_nova_despesa()
+
 
 # ---------------------------------------------------------------------------
 # Carga

@@ -21,9 +21,9 @@ from src.manual_expenses import (
 from src.theme import render_header
 
 render_header(
-    "➕ Adicionar despesa",
-    "Registre gastos que <strong>não vêm pela fatura</strong> do cartão "
-    "(PIX, dinheiro, débito).",
+    "🧾 Despesas manuais",
+    "Gerencie despesas adicionadas manualmente (PIX, Dinheiro, Débito ou Crédito não-fatura). "
+    "Você também pode adicionar pelo botão <strong>➕ Nova despesa</strong> no Dashboard.",
 )
 
 
