@@ -101,16 +101,39 @@ with st.form("nova_despesa", clear_on_submit=True):
                 )
                 st.rerun()
             except Exception as e:  # noqa: BLE001
-                msg = str(e)
-                if "403" in msg or "Forbidden" in msg or "insufficient" in msg.lower():
+                from src.drive_loader import DriveFileMissing
+                if isinstance(e, DriveFileMissing):
                     st.error(
-                        "❌ A Service Account não tem permissão para **gravar** no Drive. "
-                        "Vá na pasta `Gastos Cartão` do Google Drive, abra **Compartilhar**, "
-                        "encontre o e-mail da SA e mude de **Leitor** para **Editor**. "
-                        "Depois tente salvar novamente."
+                        "❌ **Setup necessário (uma vez só).** "
+                        "Service Accounts não conseguem criar arquivos novos em "
+                        "My Drive pessoal — só atualizar os existentes. Por isso "
+                        "você precisa criar o arquivo `manual_expenses.json` uma "
+                        "única vez, manualmente."
+                    )
+                    st.markdown(
+                        "**Jeito mais fácil — pelo PowerShell:**\n"
+                        "1. Crie um arquivo local vazio:\n"
+                        "   ```powershell\n"
+                        "   '[]' | Out-File -FilePath manual_expenses.json -Encoding utf8\n"
+                        "   ```\n"
+                        "2. Abra a pasta `Gastos Cartão` no Google Drive (web ou app)\n"
+                        "3. Arraste o arquivo `manual_expenses.json` pra dentro da pasta (faz o upload)\n"
+                        "4. Volte aqui e clique em **Adicionar despesa** de novo\n\n"
+                        "**Alternativa pela interface web:**\n"
+                        "Drive → pasta `Gastos Cartão` → **+ Novo → Upload de arquivo** → "
+                        "selecione qualquer .json com conteúdo `[]` e nome `manual_expenses.json`"
                     )
                 else:
-                    st.error(f"Falha ao salvar: {e}")
+                    msg = str(e)
+                    if "403" in msg or "Forbidden" in msg or "insufficient" in msg.lower():
+                        st.error(
+                            "❌ A Service Account não tem permissão para **gravar** no Drive. "
+                            "Vá na pasta `Gastos Cartão` do Google Drive, abra **Compartilhar**, "
+                            "encontre o e-mail da SA e mude de **Leitor** para **Editor**. "
+                            "Depois tente salvar novamente."
+                        )
+                    else:
+                        st.error(f"Falha ao salvar: {e}")
 
 # ---------------------------------------------------------------------------
 # Últimas despesas registradas

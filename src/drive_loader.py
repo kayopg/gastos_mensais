@@ -195,6 +195,11 @@ def drive_download_text(file_id: str) -> str:
     return _download_drive(file_id).decode("utf-8")
 
 
+class DriveFileMissing(RuntimeError):
+    """Levantado quando o arquivo não existe e a SA não pode criá-lo
+    (limitação: Service Accounts não têm cota em My Drive pessoal)."""
+
+
 def drive_upload_or_update_text(
     name: str,
     content: str,
@@ -203,8 +208,14 @@ def drive_upload_or_update_text(
 ) -> str:
     """Cria ou substitui o arquivo `name` na pasta raiz com o conteúdo dado.
 
+    - Se o arquivo **existe**: atualiza (usa a cota do dono — funciona).
+    - Se **não existe**: tenta criar; falha com `DriveFileMissing` se a SA não
+      tiver cota (caso comum em My Drive pessoal). O usuário deve criar o
+      arquivo manualmente (vazio com `[]`) e tentar novamente.
+
     Requer permissão de **Editor** na pasta para a Service Account.
     """
+    from googleapiclient.errors import HttpError
     from googleapiclient.http import MediaIoBaseUpload
 
     if not _has_drive_secrets():
@@ -216,10 +227,25 @@ def drive_upload_or_update_text(
 
     existing_id = drive_find_file(name, folder_id)
     if existing_id:
-        service.files().update(fileId=existing_id, media_body=media).execute()
+        service.files().update(
+            fileId=existing_id, media_body=media, supportsAllDrives=True,
+        ).execute()
         return existing_id
+
     file_metadata = {"name": name, "parents": [folder_id], "mimeType": mime}
-    file = service.files().create(
-        body=file_metadata, media_body=media, fields="id"
-    ).execute()
-    return file["id"]
+    try:
+        file = service.files().create(
+            body=file_metadata, media_body=media, fields="id",
+            supportsAllDrives=True,
+        ).execute()
+        return file["id"]
+    except HttpError as e:
+        msg = str(e)
+        if "storageQuotaExceeded" in msg or "quota" in msg.lower():
+            raise DriveFileMissing(
+                f"A Service Account não tem cota para CRIAR arquivos no Drive "
+                f"pessoal (limitação do Google). Crie o arquivo `{name}` "
+                f"manualmente na pasta `Gastos Cartão` com o conteúdo `[]` "
+                f"(lista vazia em JSON) e tente novamente."
+            ) from e
+        raise
