@@ -613,9 +613,12 @@ def parse_many(files: Iterable[tuple]) -> pd.DataFrame:
         PAGAMENTO_FATURA_RE, case=False, regex=True, na=False
     )
     df = df.loc[~is_pagamento].copy()
-    # de-duplicação básica (mesma data + estabelecimento + valor + fonte + cartao)
-    df = df.drop_duplicates(
-        subset=["data", "estabelecimento", "valor", "fonte", "parcela", "cartao"]
-    ).reset_index(drop=True)
+
+    # NOTA: NÃO fazemos drop_duplicates aqui. Duas compras genuínas no mesmo
+    # estabelecimento, mesmo dia e mesmo valor (ex: duas fichas de R$ 10 no
+    # KIDS PLAY) seriam tratadas como duplicata e somente uma sobreviveria.
+    # Como cada arquivo (`fonte`) é processado uma vez só, e o `cartao` já
+    # discrimina fontes diferentes, dedup explícito é desnecessário.
+
     df.attrs["errors"] = errors
-    return df
+    return df.reset_index(drop=True)
