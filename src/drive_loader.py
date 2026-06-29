@@ -19,7 +19,10 @@ import streamlit as st
 
 from .config import DEFAULT_CARTAO, KNOWN_CARTOES, ROOT_DIR
 
-SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
+# Escopo `drive` permite leitura E escrita — necessário para criar/atualizar
+# o arquivo `manual_expenses.json` no Drive a partir do formulário do app.
+# A SA tem acesso apenas à pasta compartilhada, então a permissão é contida.
+SCOPES = ["https://www.googleapis.com/auth/drive"]
 LOCAL_DIR = ROOT_DIR / "data" / "raw"
 SUPPORTED_EXTS = (".csv", ".xlsx", ".xls", ".ofx", ".pdf")
 
@@ -157,3 +160,66 @@ def filter_by_extension(
 def current_source() -> str:
     """Texto humano-legível para exibir na UI."""
     return "Google Drive" if _has_drive_secrets() else f"Pasta local ({LOCAL_DIR.name}/)"
+
+
+# ---------------------------------------------------------------------------
+# Helpers para arquivo único pelo nome (usado por manual_expenses.py)
+# ---------------------------------------------------------------------------
+def has_drive_secrets() -> bool:
+    """Versão pública do detector — usada por outros módulos."""
+    return _has_drive_secrets()
+
+
+def drive_root_folder_id() -> str | None:
+    if not _has_drive_secrets():
+        return None
+    return st.secrets["gdrive"]["folder_id"]
+
+
+def drive_find_file(name: str, folder_id: str | None = None) -> str | None:
+    """Localiza um arquivo pelo nome na pasta raiz. Retorna o `id` ou None."""
+    if not _has_drive_secrets():
+        return None
+    folder_id = folder_id or st.secrets["gdrive"]["folder_id"]
+    service = _drive_service()
+    query = (
+        f"name='{name}' and '{folder_id}' in parents and trashed=false"
+    )
+    resp = service.files().list(q=query, fields="files(id,name)", pageSize=10).execute()
+    files = resp.get("files", [])
+    return files[0]["id"] if files else None
+
+
+def drive_download_text(file_id: str) -> str:
+    """Baixa o conteúdo de um arquivo do Drive como texto UTF-8."""
+    return _download_drive(file_id).decode("utf-8")
+
+
+def drive_upload_or_update_text(
+    name: str,
+    content: str,
+    folder_id: str | None = None,
+    mime: str = "application/json",
+) -> str:
+    """Cria ou substitui o arquivo `name` na pasta raiz com o conteúdo dado.
+
+    Requer permissão de **Editor** na pasta para a Service Account.
+    """
+    from googleapiclient.http import MediaIoBaseUpload
+
+    if not _has_drive_secrets():
+        raise RuntimeError("Drive secrets não configurados.")
+    folder_id = folder_id or st.secrets["gdrive"]["folder_id"]
+    service = _drive_service()
+    payload = content.encode("utf-8")
+    media = MediaIoBaseUpload(io.BytesIO(payload), mimetype=mime, resumable=False)
+
+    existing_id = drive_find_file(name, folder_id)
+    if existing_id:
+        service.files().update(fileId=existing_id, media_body=media).execute()
+        return existing_id
+    file_metadata = {"name": name, "parents": [folder_id], "mimeType": mime}
+    file = service.files().create(
+        body=file_metadata, media_body=media, fields="id"
+    ).execute()
+    return file["id"]

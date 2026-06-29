@@ -8,20 +8,32 @@ from src.charts import pie_by_category, stacked_evolution, summary_metrics
 from src.classifier import classify
 from src.config import CATEGORIES, SUBCATEGORIES, TIPOS
 from src.drive_loader import current_source, fetch_invoices, filter_by_extension
+from src.manual_expenses import manual_to_df
 from src.parsers import parse_many
 from src.theme import render_header
 
 
 @st.cache_data(ttl=300, show_spinner="Processando faturas...")
 def _load_dataset() -> pd.DataFrame:
+    # 1. Carrega e classifica as faturas dos cartões
     files = filter_by_extension(fetch_invoices())
-    df = parse_many(files)
-    if df.empty:
-        return df
-    # Defensiva — garante datetime64 mesmo se algum parser deixou como object
-    df["data"] = pd.to_datetime(df["data"], errors="coerce")
-    df = df.dropna(subset=["data"])
-    return classify(df)
+    df_faturas = parse_many(files)
+    if not df_faturas.empty:
+        df_faturas["data"] = pd.to_datetime(df_faturas["data"], errors="coerce")
+        df_faturas = df_faturas.dropna(subset=["data"])
+        df_faturas = classify(df_faturas)
+
+    # 2. Carrega despesas manuais (já vêm pré-classificadas pelo formulário)
+    df_manual = manual_to_df()
+
+    # 3. Concat — manuais NÃO passam por classify (preserva escolhas do usuário)
+    if df_faturas.empty and df_manual.empty:
+        return df_faturas
+    if df_faturas.empty:
+        return df_manual
+    if df_manual.empty:
+        return df_faturas
+    return pd.concat([df_faturas, df_manual], ignore_index=True)
 
 
 def _fmt_brl(v: float) -> str:
@@ -100,6 +112,14 @@ tipos_sel = st.sidebar.multiselect(
     "Tipo", options=TIPOS, default=[], placeholder="Todos",
 )
 
+# Quem pagou — só mostra opções existentes (vem das despesas manuais)
+quem_disp = sorted(
+    [q for q in df["portador"].dropna().unique() if str(q).strip()]
+)
+quem_sel = st.sidebar.multiselect(
+    "Quem pagou", options=quem_disp, default=[], placeholder="Todos",
+)
+
 # ---------------------------------------------------------------------------
 # Aplicação dos filtros
 #
@@ -123,6 +143,8 @@ if subs_sel:
     mask_base &= df["subcategoria"].isin(subs_sel)
 if tipos_sel:
     mask_base &= df["tipo"].isin(tipos_sel)
+if quem_sel:
+    mask_base &= df["portador"].isin(quem_sel)
 
 mask_view = mask_base & (df["mes_ref"] == mes_sel)
 df_view = df.loc[mask_view].copy()
@@ -174,14 +196,15 @@ st.caption(
 
 show = (
     df_view[
-        ["data", "estabelecimento", "cartao", "categoria", "subcategoria",
-         "tipo", "valor", "parcela"]
+        ["data", "estabelecimento", "cartao", "portador",
+         "categoria", "subcategoria", "tipo", "valor", "parcela"]
     ]
     .sort_values("data", ascending=False)
     .rename(columns={
         "data": "Data",
         "estabelecimento": "Estabelecimento",
         "cartao": "Cartão",
+        "portador": "Quem",
         "categoria": "Categoria",
         "subcategoria": "Subcategoria",
         "tipo": "Tipo",

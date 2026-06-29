@@ -36,13 +36,23 @@ render_header(
 
 @st.cache_data(ttl=300, show_spinner="Carregando faturas...")
 def _load_raw() -> pd.DataFrame:
+    from src.manual_expenses import manual_to_df
+
     files = filter_by_extension(fetch_invoices())
-    df = parse_many(files)
-    if df.empty:
-        return df
-    # Defensiva — garante datetime64 mesmo se algum parser deixou como object
-    df["data"] = pd.to_datetime(df["data"], errors="coerce")
-    return df.dropna(subset=["data"])
+    df_faturas = parse_many(files)
+    if not df_faturas.empty:
+        df_faturas["data"] = pd.to_datetime(df_faturas["data"], errors="coerce")
+        df_faturas = df_faturas.dropna(subset=["data"])
+
+    df_manual = manual_to_df()
+
+    if df_faturas.empty and df_manual.empty:
+        return df_faturas
+    if df_faturas.empty:
+        return df_manual
+    if df_manual.empty:
+        return df_faturas
+    return pd.concat([df_faturas, df_manual], ignore_index=True)
 
 
 df = _load_raw()

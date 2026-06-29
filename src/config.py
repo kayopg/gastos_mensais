@@ -90,6 +90,27 @@ DEFAULT_CARTAO = "XP"
 KNOWN_CARTOES = ["XP", "Sicoob", "Itaú"]
 
 # ---------------------------------------------------------------------------
+# Despesas manuais (entradas via formulário no app, fora das faturas)
+# ---------------------------------------------------------------------------
+# Formas de pagamento que podem ser selecionadas no formulário "Adicionar".
+# As que começam com "Crédito" mostram aviso de duplicata (a fatura vai trazer).
+FORMAS_PAGAMENTO = [
+    "Dinheiro",
+    "PIX",
+    "Débito",
+    "Crédito XP",
+    "Crédito Sicoob",
+    "Crédito Itaú",
+]
+
+# Pessoas que podem aparecer no campo "Quem pagou".
+PESSOAS = ["Ari", "Esposa", "Outro"]
+
+# Nome do arquivo no Drive (na pasta raiz `Gastos Cartão`) que guarda as
+# despesas manuais. Schema: lista de dicts (ver src/manual_expenses.py).
+MANUAL_EXPENSES_FILE = "manual_expenses.json"
+
+# ---------------------------------------------------------------------------
 # Pagamentos de fatura — não são despesas, devem ser filtrados do dataset
 # (são apenas a quitação da fatura anterior, vindo da conta corrente).
 # ---------------------------------------------------------------------------

@@ -32,6 +32,11 @@ pages_config = [
         default=True,
     ),
     st.Page(
+        "views/adicionar.py",
+        title="Adicionar",
+        icon="➕",
+    ),
+    st.Page(
         "views/classificacao.py",
         title="Classificação",
         icon="🏷️",
