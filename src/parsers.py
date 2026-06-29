@@ -324,14 +324,134 @@ def parse_ofx(content: bytes, source: str, cartao: str | None = None) -> pd.Data
 
 
 # ---------------------------------------------------------------------------
-# PDF (Itaú — extrai a tabela de Lançamentos do PDF da fatura)
+# PDF — dispatcher por cartão
 # ---------------------------------------------------------------------------
 _PDF_DATE_LINE = re.compile(r"^(\d{2}/\d{2})\s+(.+)$")
 _PDF_MONEY = re.compile(r"(\d{1,3}(?:\.\d{3})*,\d{2})")
 _PDF_PARCELA_TAIL = re.compile(r"(\d{1,2}/\d{1,2})$")
 
+# Sicoob: formato numérico em inglês (R$ 2,975.98), data DD MMM, multi-coluna
+_SICOOB_MONTHS = {
+    "JAN": 1, "FEV": 2, "MAR": 3, "ABR": 4, "MAI": 5, "JUN": 6,
+    "JUL": 7, "AGO": 8, "SET": 9, "OUT": 10, "NOV": 11, "DEZ": 12,
+}
+_SICOOB_DATE = re.compile(r"\b(\d{1,2})\s+([A-Z]{3})\b")
+_SICOOB_VALUE = re.compile(r"(-)?\s*R\$\s*(-?[\d,]*\.\d{2})")
+_SICOOB_PARC = re.compile(r"\b(\d{1,2})/(\d{1,2})\b")
+
 
 def parse_pdf(content: bytes, source: str, cartao: str | None = None) -> pd.DataFrame:
+    """Dispatcher PDF — escolhe o parser certo pelo cartão.
+
+    Sicoob e Itaú emitem PDFs com layouts completamente diferentes:
+      - Sicoob: numérico em inglês (`R$ 2,975.98`), datas `DD MMM`, multi-coluna,
+        extraído via `pdfplumber.extract_tables()`.
+      - Itaú: numérico em PT-BR (`R$ 1.234,56`), datas `DD/MM`, seção `Lançamentos:`
+        com cabeçalho `DATA ESTABELECIMENTO VALOREMR$`.
+    """
+    if (cartao or "").lower() == "sicoob":
+        return parse_sicoob_pdf(content, source, cartao=cartao)
+    return parse_itau_pdf(content, source, cartao=cartao)
+
+
+# ---------------------------------------------------------------------------
+# Sicoob PDF — usa pdfplumber.extract_tables() para isolar cada lançamento
+# ---------------------------------------------------------------------------
+def parse_sicoob_pdf(content: bytes, source: str, cartao: str | None = None) -> pd.DataFrame:
+    """Extrai lançamentos do PDF do Sicoob.
+
+    Estratégia: cada célula de cada tabela detectada pelo pdfplumber contém
+    um lançamento (possivelmente multi-linha por causa do layout). Normaliza
+    espaços, extrai data (`DD MMM`), valor (`R$ N,NNN.NN` com sinal opcional
+    antes do R$), e parcela embutida (`NN/NN`).
+    """
+    import pdfplumber
+
+    invoice_month = _invoice_month_from_filename(source)
+    if invoice_month:
+        fat_year = int(invoice_month[:4])
+        fat_month = int(invoice_month[5:7])
+    else:
+        from datetime import date as _date
+        fat_year, fat_month = _date.today().year, _date.today().month
+
+    cells: list[str] = []
+    with pdfplumber.open(io.BytesIO(content)) as pdf:
+        for page in pdf.pages:
+            for table in page.extract_tables() or []:
+                for row in table:
+                    for cell in row:
+                        if cell:
+                            cells.append(cell)
+
+    rows: list[dict] = []
+    for cell in cells:
+        text = " ".join(cell.split())  # normaliza whitespace (\n vira espaço)
+        if not text:
+            continue
+        upper = text.upper()
+        # Ignora linhas de resumo / totais / sem valor
+        if any(skip in upper for skip in ("SALDO ANTERIOR", "TOTAL DE ", "TOTAL R$", "PROTEÇÃO")):
+            continue
+
+        date_m = _SICOOB_DATE.search(text)
+        val_m = _SICOOB_VALUE.search(text)
+        if not date_m or not val_m:
+            continue
+        mon_abbr = date_m.group(2)
+        if mon_abbr not in _SICOOB_MONTHS:
+            continue
+        day = int(date_m.group(1))
+        mon = _SICOOB_MONTHS[mon_abbr]
+
+        sign = val_m.group(1) or ""
+        raw_val = val_m.group(2)
+        valor_str = (sign + raw_val).replace(",", "")  # vírgula = milhar no formato inglês
+        try:
+            valor = float(valor_str)
+        except ValueError:
+            continue
+
+        before_date = text[: date_m.start()].strip()
+        between = text[date_m.end(): val_m.start()].strip()
+        after_value = text[val_m.end():].strip()
+        full = " ".join(s for s in [before_date, between, after_value] if s)
+
+        parc_m = _SICOOB_PARC.search(full)
+        if parc_m:
+            a, b = int(parc_m.group(1)), int(parc_m.group(2))
+            if 1 <= a <= b <= 99:
+                parcela = f"{a} de {b}"
+                is_parc = b > 1
+                full = (full[: parc_m.start()] + " " + full[parc_m.end():]).strip()
+            else:
+                parcela, is_parc = "-", False
+        else:
+            parcela, is_parc = "-", False
+
+        year = fat_year if mon <= fat_month else fat_year - 1
+        try:
+            tx_date = pd.Timestamp(year=year, month=mon, day=day)
+        except (ValueError, OverflowError):
+            continue
+
+        est = " ".join(full.split())
+        rows.append({
+            "data": tx_date,
+            "estabelecimento": est,
+            "portador": "",
+            "valor": valor,
+            "parcela": parcela,
+            "is_parcelado": is_parc,
+        })
+
+    return _finalize(pd.DataFrame(rows), source, cartao=cartao)
+
+
+# ---------------------------------------------------------------------------
+# Itaú PDF (mantém parse original)
+# ---------------------------------------------------------------------------
+def parse_itau_pdf(content: bytes, source: str, cartao: str | None = None) -> pd.DataFrame:
     """Extrai lançamentos de uma fatura Itaú em PDF.
 
     Heurísticas:
