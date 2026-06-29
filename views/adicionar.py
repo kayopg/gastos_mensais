@@ -151,20 +151,29 @@ else:
         key=lambda x: (x[1].get("registrado_em") or x[1].get("data") or ""),
         reverse=True,
     )
-    df = pd.DataFrame([
-        {
-            "Data":            it.get("data", ""),
-            "Estabelecimento": it.get("estabelecimento", ""),
-            "Valor":           it.get("valor", 0),
-            "Forma":           it.get("forma_pagamento", ""),
-            "Quem":            it.get("quem", ""),
-            "Categoria":       it.get("categoria", ""),
-            "Subcategoria":    it.get("subcategoria", ""),
-            "Tipo":            it.get("tipo", ""),
-            "Parcela":         it.get("parcela", "-"),
-        }
-        for _, it in items_with_idx
-    ])
+    rows = []
+    for _, it in items_with_idx:
+        # Conversão defensiva — JSON guarda string ISO, DataFrame precisa de datetime
+        try:
+            data_val = pd.to_datetime(it.get("data", ""), errors="coerce")
+        except Exception:
+            data_val = pd.NaT
+        try:
+            valor_val = float(it.get("valor", 0) or 0)
+        except (TypeError, ValueError):
+            valor_val = 0.0
+        rows.append({
+            "Data":            data_val,
+            "Estabelecimento": str(it.get("estabelecimento", "")),
+            "Valor":           valor_val,
+            "Forma":           str(it.get("forma_pagamento", "")),
+            "Quem":            str(it.get("quem", "")),
+            "Categoria":       str(it.get("categoria", "")),
+            "Subcategoria":    str(it.get("subcategoria", "")),
+            "Tipo":            str(it.get("tipo", "")),
+            "Parcela":         str(it.get("parcela", "-")),
+        })
+    df = pd.DataFrame(rows)
 
     st.dataframe(
         df,

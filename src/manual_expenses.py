@@ -115,29 +115,47 @@ def manual_to_df() -> pd.DataFrame:
       - `parcela` ≠ '-' → `is_parcelado=True`
       - `fonte` = "Manual"
       - `mes_ref` derivado da `data` da compra
+
+    Defensivo a campos ausentes ou tipos inesperados.
     """
     items = load_manual_expenses()
     if not items:
         return _empty_schema_frame()
 
-    df = pd.DataFrame(items)
+    # Garante que todos os items são dicts (filtra lixo)
+    items = [it for it in items if isinstance(it, dict)]
+    if not items:
+        return _empty_schema_frame()
 
-    # Normaliza tipos e colunas
+    # Pre-normaliza cada item antes de criar o DataFrame
+    rows = []
+    for it in items:
+        try:
+            v = float(it.get("valor", 0) or 0)
+        except (TypeError, ValueError):
+            v = 0.0
+        parcela = str(it.get("parcela") or "-").strip() or "-"
+        is_parc = parcela != "-" and "de" in parcela.lower()
+        rows.append({
+            "data":            it.get("data", ""),
+            "estabelecimento": str(it.get("estabelecimento") or "").strip(),
+            "portador":        str(it.get("quem") or ""),
+            "cartao":          str(it.get("forma_pagamento") or "Manual"),
+            "valor":           v,
+            "parcela":         parcela,
+            "is_parcelado":    is_parc,
+            "categoria":       str(it.get("categoria") or "Outros"),
+            "subcategoria":    str(it.get("subcategoria") or ""),
+            "tipo":            str(it.get("tipo") or "Variável"),
+            "fonte":           "Manual",
+        })
+
+    df = pd.DataFrame(rows)
     df["data"] = pd.to_datetime(df["data"], errors="coerce")
     df = df.dropna(subset=["data"]).copy()
-    df["estabelecimento"] = df.get("estabelecimento", "").fillna("").astype(str).str.strip()
-    df["portador"] = df.get("quem", "").fillna("").astype(str)
-    df["cartao"] = df.get("forma_pagamento", "Manual").fillna("Manual").astype(str)
-    df["valor"] = pd.to_numeric(df.get("valor", 0), errors="coerce").fillna(0.0)
-    df["parcela"] = df.get("parcela", "-").fillna("-").astype(str)
-    df["is_parcelado"] = df["parcela"].apply(
-        lambda p: bool(p) and p.strip() != "-" and "de" in p.lower()
-    )
-    df["categoria"] = df.get("categoria", "Outros").fillna("Outros").astype(str)
-    df["subcategoria"] = df.get("subcategoria", "").fillna("").astype(str)
-    df["tipo"] = df.get("tipo", "Variável").fillna("Variável").astype(str)
+    if df.empty:
+        return _empty_schema_frame()
     df["mes_ref"] = df["data"].dt.strftime("%Y-%m")
-    df["fonte"] = "Manual"
 
     return df[
         [
